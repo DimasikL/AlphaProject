@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PII Masking Proxy</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ═══ HEADER ═══ */
+        .top-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem 1rem;
+            background: #111;
+            border-bottom: 1px solid #222;
+            flex-shrink: 0;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 1rem;
+            font-weight: 600;
+            color: #ef4444;
+        }
+        .nav-tabs {
+            display: flex;
+            gap: 0.25rem;
+        }
+        .nav-tab {
+            padding: 0.4rem 0.8rem;
+            background: transparent;
+            border: 1px solid transparent;
+            color: #888;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+        }
+        .nav-tab:hover { color: #e0e0e0; background: #1a1a1a; }
+        .nav-tab.active { color: #e0e0e0; background: #1a1a1a; border-color: #333; }
+
+        /* ═══ MAIN LAYOUT ═══ */
+        .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+        /* ═══ CHAT TAB ═══ */
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            max-width: 800px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        /* Messages area */
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        .messages::-webkit-scrollbar { width: 6px; }
+        .messages::-webkit-scrollbar-track { background: transparent; }
+        .messages::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+        /* Message bubble */
+        .msg {
+            display: flex;
+            flex-direction: column;
+            max-width: 85%;
+            animation: fadeIn 0.3s ease;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+        .msg.user { align-self: flex-end; }
+        .msg.assistant { align-self: flex-start; }
+
+        .msg-header {
+            font-size: 0.7rem;
+            color: #666;
+            margin-bottom: 0.2rem;
+            padding: 0 0.5rem;
+        }
+        .msg.user .msg-header { text-align: right; }
+
+        .msg-bubble {
+            padding: 0.7rem 1rem;
+            border-radius: 16px;
+            line-height: 1.5;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .msg.user .msg-bubble {
+            background: #ef4444;
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        .msg.assistant .msg-bubble {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-bottom-left-radius: 4px;
+        }
+
+        /* Cursor animation */
+        .cursor {
+            display: inline-block;
+            width: 2px;
+            height: 1em;
+            background: #ef4444;
+            animation: blink 0.7s infinite;
+            vertical-align: text-bottom;
+            margin-left: 2px;
+        }
+        @keyframes blink { 50% { opacity: 0; } }
+
+        /* PII details (collapsible under message) */
+        .msg-details {
+            margin-top: 0.3rem;
+            padding: 0 0.5rem;
+        }
+        .details-toggle {
+            font-size: 0.7rem;
+            color: #555;
+            cursor: pointer;
+            user-select: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+        .details-toggle:hover { color: #888; }
+        .details-content {
+            display: none;
+            margin-top: 0.3rem;
+            background: #111;
+            border: 1px solid #222;
+            border-radius: 8px;
+            padding: 0.5rem 0.7rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.75rem;
+            color: #888;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        .details-content.open { display: block; }
+
+        /* Stats badges */
+        .msg-stats {
+            display: flex;
+            gap: 0.3rem;
+            flex-wrap: wrap;
+            margin-top: 0.3rem;
+            padding: 0 0.5rem;
+        }
+        .badge {
+            font-size: 0.65rem;
+            padding: 0.1rem 0.4rem;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 4px;
+            color: #aaa;
+        }
+        .badge.alert { border-color: #ef4444; color: #ef4444; }
+        .badge .hl { color: #ef4444; font-weight: 600; }
+
+        /* Welcome screen */
+        .welcome {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #444;
+            gap: 1rem;
+        }
+        .welcome-icon { font-size: 3rem; }
+        .welcome-text { font-size: 1.1rem; }
+        .welcome-examples {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+            margin-top: 0.5rem;
+        }
+        .welcome-example {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 10px;
+            padding: 0.6rem 1rem;
+            cursor: pointer;
+            color: #888;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+            max-width: 500px;
+        }
+        .welcome-example:hover { border-color: #ef4444; color: #e0e0e0; }
+
+        /* ═══ INPUT BAR ═══ */
+        .input-bar {
+            padding: 0.7rem 1rem;
+            background: #111;
+            border-top: 1px solid #222;
+            flex-shrink: 0;
+        }
+        .input-row {
+            max-width: 800px;
+            margin: 0 auto;
+            display: flex;
+            gap: 0.5rem;
+            align-items: flex-end;
+        }
+        .input-wrap {
+            flex: 1;
+            position: relative;
+        }
+        .input-wrap textarea {
+            width: 100%;
+            min-height: 44px;
+            max-height: 150px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 12px;
+            color: #e0e0e0;
+            padding: 0.6rem 1rem;
+            font-size: 0.9rem;
+            font-family: inherit;
+            resize: none;
+            outline: none;
+            line-height: 1.4;
+        }
+        .input-wrap textarea:focus { border-color: #ef4444; }
+        .send-btn {
+            width: 44px;
+            height: 44px;
+            background: #ef4444;
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-size: 1.2rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+            flex-shrink: 0;
+        }
+        .send-btn:hover { background: #dc2626; }
+        .send-btn:disabled { background: #555; cursor: not-allowed; }
+
+        /* ═══ OTHER TABS ═══ */
+        .tab-panel {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1.5rem;
+        }
+        .tab-panel .card {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 1.2rem;
+            margin-bottom: 1rem;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .tab-panel .label {
+            font-size: 0.75rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 0.5rem;
+        }
+        .tab-panel textarea {
+            width: 100%;
+            min-height: 80px;
+            background: #111;
+            border: 1px solid #444;
+            border-radius: 8px;
+            color: #e0e0e0;
+            padding: 0.75rem;
+            font-size: 0.9rem;
+            font-family: inherit;
+            resize: vertical;
+            outline: none;
+        }
+        .tab-panel textarea:focus { border-color: #ef4444; }
+        .tab-panel button {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-p { background: #ef4444; color: white; }
+        .btn-p:hover { background: #dc2626; }
+        .btn-s { background: #333; color: #ccc; }
+        .btn-s:hover { background: #444; }
+        .btn-row { display: flex; gap: 0.5rem; margin-top: 0.7rem; flex-wrap: wrap; }
+
+        .meta-box {
+            background: #111;
+            border: 1px solid #222;
+            border-radius: 8px;
+            padding: 0.7rem;
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            color: #888;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+        .comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+        @media (max-width: 700px) { .comparison { grid-template-columns: 1fr; } }
+
+        .pii-legend {
+            display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.5rem;
+        }
+        .legend-item {
+            font-size: 0.7rem; padding: 0.15rem 0.5rem;
+            border-radius: 4px; border: 1px solid;
+        }
+
+        .upload-area {
+            border: 2px dashed #444;
+            border-radius: 8px;
+            padding: 1.5rem;
+            text-align: center;
+            color: #666;
+            cursor: pointer;
+        }
+        .upload-area:hover { border-color: #ef4444; }
+        .upload-area input { display: none; }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 0.8rem;
+            margin-bottom: 1rem;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .dash-card {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 1rem;
+            text-align: center;
+        }
+        .dash-num { font-size: 1.8rem; font-weight: bold; color: #ef4444; }
+        .dash-lbl { font-size: 0.7rem; color: #888; margin-top: 0.2rem; }
+
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+<!-- ═══ TOP BAR ═══ -->
+<div class="top-bar">
+    <div class="logo">🔒 PII Proxy</div>
+    <div class="nav-tabs">
+        <div class="nav-tab active" onclick="switchTab('chat')">💬 Чат</div>
+        <div class="nav-tab" onclick="switchTab('analyze')">🔍 Анализ</div>
+        <div class="nav-tab" onclick="switchTab('table')">📊 Таблица</div>
+        <div class="nav-tab" onclick="switchTab('dash')">📈 Дашборд</div>
+    </div>
+</div>
+
+<div class="main">
+    <!-- ═══════════ CHAT ═══════════ -->
+    <div id="tab-chat" class="chat-container">
+        <div class="messages" id="messagesArea">
+            <div class="welcome" id="welcome">
+                <div class="welcome-icon">🔒</div>
+                <div class="welcome-text">PII Masking Proxy</div>
+                <div style="color:#555;font-size:0.8rem">Отправьте сообщение с персональными данными</div>
+                <div class="welcome-examples">
+                    <div class="welcome-example" onclick="sendExample(0)">
+                        💳 «Я Иванов Пётр, телефон +7 999 123-45-67. Какой баланс?»
+                    </div>
+                    <div class="welcome-example" onclick="sendExample(1)">
+                        💸 «Переведите 5000 руб. Сидорову на карту 4532 0151 1283 0366»
+                    </div>
+                    <div class="welcome-example" onclick="sendExample(2)">
+                        📋 «Я Петров, паспорт 45 15 123456, email petrov@gmail.com, СНИЛС 112-233-445 95»
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="input-bar">
+            <div class="input-row">
+                <div class="input-wrap">
+                        <textarea id="chatInput" placeholder="Введите сообщение..." rows="1"
+                                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
+                </div>
+                <button class="send-btn" id="sendBtn" onclick="sendMessage()">➤</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════ ANALYZE ═══════════ -->
+    <div id="tab-analyze" class="tab-panel hidden">
+        <div class="card">
+            <div class="label">Текст для анализа PII</div>
+            <textarea id="analyzeInput" placeholder="Вставьте текст...">Я Петров Алексей Сергеевич, паспорт 45 15 123456, телефон +7 916 555-44-33, email petrov@gmail.com, дата рождения 01.05.1985, СНИЛС 112-233-445 95. Карта 4532 0151 1283 0366.</textarea>
+            <div class="btn-row">
+                <button class="btn-p" onclick="analyzePII()">🔍 Найти PII</button>
+            </div>
+        </div>
+        <div class="card" id="analyzeResult" style="display:none">
+            <div class="label">Найденные персональные данные</div>
+            <div id="highlightedText" style="line-height:2;font-size:0.9rem"></div>
+            <div class="pii-legend" id="piiLegend"></div>
+        </div>
+        <div id="analyzeComp" class="comparison" style="display:none">
+            <div class="card"><div class="label">❌ Оригинал</div><div class="meta-box" id="aOrig"></div></div>
+            <div class="card"><div class="label">✅ Замаскировано</div><div class="meta-box" id="aMask"></div></div>
+        </div>
+        <div class="card" id="analyzeEnt" style="display:none">
+            <div class="label">Детали</div>
+            <div class="meta-box" id="entTable"></div>
+        </div>
+    </div>
+
+    <!-- ═══════════ TABLE ═══════════ -->
+    <div id="tab-table" class="tab-panel hidden">
+        <div class="card">
+            <div class="label">Загрузить CSV</div>
+            <div class="upload-area" onclick="document.getElementById('csvFile').click()">
+                <input type="file" id="csvFile" accept=".csv" onchange="uploadCSV()">
+                <p>📁 Нажмите для выбора CSV файла</p>
+                <p style="font-size:0.8rem;margin-top:0.5rem;color:#ef4444" id="fileName"></p>
+            </div>
+            <div class="btn-row">
+                <button class="btn-s" onclick="downloadSampleCSV()">📥 Пример CSV</button>
+            </div>
+        </div>
+        <div class="card" id="tableRes" style="display:none">
+            <div class="label">Результат маскирования</div>
+            <div class="meta-box" id="tableOut" style="max-height:400px"></div>
+            <div style="margin-top:0.5rem" id="tableStats"></div>
+        </div>
+    </div>
+
+    <!-- ═══════════ DASHBOARD ═══════════ -->
+    <div id="tab-dash" class="tab-panel hidden">
+        <div class="dashboard-grid" id="dashGrid"></div>
+        <div class="card">
+            <div class="label">Детали</div>
+            <div class="meta-box" id="dashInfo">Загрузка...</div>
+            <div class="btn-row"><button class="btn-p" onclick="loadDash()">🔄 Обновить</button></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const API = '/api';
+    const SID = 'chat-' + Math.random().toString(36).substr(2, 8);
+    let isStreaming = false;
+    let msgCount = 0;
+
+    const EXAMPLES = [
+        'Здравствуйте, я Иванов Пётр Сергеевич, телефон +7 999 123-45-67. Какой у меня баланс?',
+        'Переведите 5000 рублей Сидорову Алексею на карту 4532 0151 1283 0366',
+        'Я Петров Алексей Сергеевич, паспорт 45 15 123456, email petrov@gmail.com, СНИЛС 112-233-445 95. Какой баланс?',
+    ];
+
+    // ═══ TAB SWITCHING ═══
+    function switchTab(tab) {
+        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+        event.target.classList.add('active');
+        ['chat','analyze','table','dash'].forEach(t => {
+            const el = document.getElementById('tab-'+t);
+            if(el) el.classList.toggle('hidden', t !== tab);
+        });
+        if(tab === 'dash') loadDash();
+    }
+
+    // ═══ AUTO-RESIZE TEXTAREA ═══
+    const chatInput = document.getElementById('chatInput');
+    chatInput.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+    });
+
+    // ═══ SEND EXAMPLE ═══
+    function sendExample(i) {
+        chatInput.value = EXAMPLES[i];
+        sendMessage();
+    }
+
+    // ═══ SEND MESSAGE ═══
+    async function sendMessage() {
+        const text = chatInput.value.trim();
+        if (!text || isStreaming) return;
+
+        // Hide welcome
+        const welcome = document.getElementById('welcome');
+        if (welcome) welcome.remove();
+
+        // Add user message
+        addMessage('user', text);
+        chatInput.value = '';
+        chatInput.style.height = 'auto';
+
+        isStreaming = true;
+        document.getElementById('sendBtn').disabled = true;
+
+        // Add assistant placeholder
+        const assistantId = addMessage('assistant', '', true);
+
+        try {
+            const res = await fetch(`${API}/chat`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({message: text, session_id: SID, stream: true}),
+            });
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let fullText = '';
+            let buf = '';
+            let meta = null;
+            let stats = null;
+
+            while (true) {
+                const {done, value} = await reader.read();
+                if (done) break;
+                buf += decoder.decode(value, {stream: true});
+                const events = buf.split('\n\n');
+                buf = events.pop();
+
+                for (const ev of events) {
+                    const lines = ev.split('\n');
+                    let eType = null, eData = null;
+                    for (const l of lines) {
+                        if (l.startsWith('event: ')) eType = l.slice(7).trim();
+                        else if (l.startsWith('data: ')) eData = l.slice(6);
+                    }
+                    if (eType === 'meta' && eData) {
+                        try { meta = JSON.parse(eData); } catch(e) {}
+                    } else if (eType === 'done' && eData) {
+                        try { stats = JSON.parse(eData).stats; } catch(e) {}
+                    } else if (eData && !eData.startsWith('{')) {
+                        fullText += eData;
+                        updateMessage(assistantId, fullText, true);
+                    }
+                }
+            }
+
+            // Finalize
+            updateMessage(assistantId, fullText, false);
+            if (meta || stats) {
+                addMessageDetails(assistantId, meta, stats);
+            }
+
+        } catch(e) {
+            updateMessage(assistantId, '❌ Ошибка: ' + e.message, false);
+        }
+
+        isStreaming = false;
+        document.getElementById('sendBtn').disabled = false;
+        chatInput.focus();
+    }
+
+    // ═══ MESSAGE MANAGEMENT ═══
+    function addMessage(role, text, streaming = false) {
+        const area = document.getElementById('messagesArea');
+        const id = 'msg-' + (++msgCount);
+
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `msg ${role}`;
+        msgDiv.id = id;
+
+        const header = document.createElement('div');
+        header.className = 'msg-header';
+        header.textContent = role === 'user' ? '👤 Вы' : '🤖 Ассистент';
+
+        const bubble = document.createElement('div');
+        bubble.className = 'msg-bubble';
+        bubble.id = id + '-bubble';
+        if (text) {
+            bubble.textContent = text;
+        }
+        if (streaming) {
+            bubble.innerHTML = (text || '') + '<span class="cursor"></span>';
+        }
+
+        msgDiv.appendChild(header);
+        msgDiv.appendChild(bubble);
+        area.appendChild(msgDiv);
+        area.scrollTop = area.scrollHeight;
+
+        return id;
+    }
+
+    function updateMessage(id, text, streaming) {
+        const bubble = document.getElementById(id + '-bubble');
+        if (!bubble) return;
+        if (streaming) {
+            bubble.innerHTML = escapeHtml(text) + '<span class="cursor"></span>';
+        } else {
+            bubble.textContent = text || '(пустой ответ)';
+        }
+        const area = document.getElementById('messagesArea');
+        area.scrollTop = area.scrollHeight;
+    }
+
+    function addMessageDetails(id, meta, stats) {
+        const msgDiv = document.getElementById(id);
+        if (!msgDiv) return;
+
+        // Stats badges
+        if (stats) {
+            const statsDiv = document.createElement('div');
+            statsDiv.className = 'msg-stats';
+            let html = '';
+            if (stats.total_found !== undefined) html += `<span class="badge">PII: <span class="hl">${stats.total_found}</span></span>`;
+            if (stats.by_type) {
+                for (const [t,c] of Object.entries(stats.by_type))
+                    html += `<span class="badge">${t}: ${c}</span>`;
+            }
+            if (stats.replaced !== undefined) html += `<span class="badge">Unmask: ${stats.replaced}</span>`;
+            if (stats.latency_ms !== undefined) html += `<span class="badge">${stats.latency_ms}мс</span>`;
+            if (stats.leaked_pii_in_response > 0) html += `<span class="badge alert">⚠️ Leak: ${stats.leaked_pii_in_response}</span>`;
+            if (stats.history_length) html += `<span class="badge">Msgs: ${stats.history_length}</span>`;
+            statsDiv.innerHTML = html;
+            msgDiv.appendChild(statsDiv);
+        }
+
+        // Collapsible details
+        if (meta) {
+            const detDiv = document.createElement('div');
+            detDiv.className = 'msg-details';
+
+            const toggleId = 'det-' + msgCount;
+            detDiv.innerHTML = `
+                <span class="details-toggle" onclick="toggleDetails('${toggleId}')">
+                    ▶ Детали маскирования
+                </span>
+                <div class="details-content" id="${toggleId}">` +
+                `🔒 В LLM: ${meta.masked_query || '—'}\n\n` +
+                `🗂 Маппинг: ${JSON.stringify(meta.mapping || {}, null, 2)}` +
+                `</div>`;
+
+            msgDiv.appendChild(detDiv);
+        }
+
+        const area = document.getElementById('messagesArea');
+        area.scrollTop = area.scrollHeight;
+    }
+
+    function toggleDetails(id) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.classList.toggle('open');
+            const toggle = el.previousElementSibling;
+            if (toggle) toggle.textContent = el.classList.contains('open') ? '▼ Детали маскирования' : '▶ Детали маскирования';
+        }
+    }
+
+    function escapeHtml(t) {
+        const d = document.createElement('div');
+        d.textContent = t;
+        return d.innerHTML;
+    }
+
+    // ═══ ANALYZE ═══
+    async function analyzePII() {
+        const text = document.getElementById('analyzeInput').value.trim();
+        if (!text) return;
+        try {
+            const res = await fetch(`${API}/analyze`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({message: text, stream: false})
+            });
+            if (!res.ok) { alert('Ошибка: ' + res.status); return; }
+            const d = await res.json();
+            const entities = d.entities || [];
+
+            document.getElementById('analyzeResult').style.display = 'block';
+            document.getElementById('highlightedText').innerHTML = d.highlighted_html || text;
+
+            document.getElementById('analyzeComp').style.display = 'grid';
+            document.getElementById('aOrig').textContent = d.original || text;
+            document.getElementById('aMask').textContent = d.masked || text;
+
+            const colors = {PERSON:'#ff6b6b',PHONE:'#ffa94d',EMAIL:'#69db7c',PASSPORT:'#748ffc',
+                SNILS:'#da77f2',INN:'#f06595',CARD:'#4ecdc4',ACCOUNT:'#45b7d1',DATE:'#ffd93d',ADDRESS:'#95e1d3'};
+
+            if (entities.length > 0) {
+                const types = [...new Set(entities.map(e => e.type))];
+                document.getElementById('piiLegend').innerHTML = types.map(t =>
+                    `<span class="legend-item" style="background:${colors[t]||'#666'}33;border-color:${colors[t]||'#666'}">${t}: ${entities.filter(e=>e.type===t).length}</span>`
+                ).join(' ');
+            } else {
+                document.getElementById('piiLegend').innerHTML = '<span style="color:#69db7c;font-size:0.8rem">✅ PII не найдено</span>';
+            }
+
+            document.getElementById('analyzeEnt').style.display = 'block';
+            if (entities.length) {
+                let tbl = 'Тип           | Значение                    | Conf   | Valid\n';
+                tbl +=   '──────────────┼─────────────────────────────┼────────┼──────\n';
+                for (const e of entities) {
+                    tbl += `${(e.type||'').padEnd(14)}| ${(e.value||'').substring(0,28).padEnd(28)}| ${((e.confidence||0)*100).toFixed(0).padStart(5)}% | ${e.validated}\n`;
+                }
+                document.getElementById('entTable').textContent = tbl;
+            } else {
+                document.getElementById('entTable').textContent = 'PII не найдены.';
+            }
+        } catch(e) { alert('Ошибка: ' + e.message); }
+    }
+
+    // ═══ TABLE ═══
+    async function uploadCSV() {
+        const file = document.getElementById('csvFile').files[0];
+        if (!file) return;
+        document.getElementById('fileName').textContent = '📄 ' + file.name;
+        const fd = new FormData();
+        fd.append('file', file);
+        try {
+            const res = await fetch(`${API}/table`, {method: 'POST', body: fd});
+            const d = await res.json();
+            document.getElementById('tableRes').style.display = 'block';
+            document.getElementById('tableOut').textContent = d.masked_csv;
+            document.getElementById('tableStats').innerHTML =
+                `<span class="badge">Замен: <span class="hl">${Object.keys(d.mapping || {}).length}</span></span>`;
+        } catch(e) { alert('Ошибка: ' + e.message); }
+    }
+
+    function downloadSampleCSV() {
+        const csv = 'ФИО,Телефон,Email,Паспорт,Сумма\n' +
+            'Иванов Пётр Сергеевич,+7 999 123-45-67,ivanov@mail.ru,45 15 123456,5000\n' +
+            'Козлова Мария Ивановна,+7 916 555-44-33,kozlova@gmail.com,77 14 654321,15000\n' +
+            'Петров Алексей Юрьевич,+7 495 111-22-33,petrov@yandex.ru,50 03 789012,3200\n';
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8;'}));
+        a.download = 'sample_data.csv';
+        a.click();
+    }
+
+    // ═══ DASHBOARD ═══
+    async function loadDash() {
+        try {
+            const [audit, sessions] = await Promise.all([
+                fetch(`${API}/audit/stats`).then(r => r.json()),
+                fetch(`${API}/sessions`).then(r => r.json()),
+            ]);
+            document.getElementById('dashGrid').innerHTML = `
+                <div class="dash-card"><div class="dash-num">${audit.total_requests}</div><div class="dash-lbl">Запросов</div></div>
+                <div class="dash-card"><div class="dash-num">${audit.total_pii_masked}</div><div class="dash-lbl">PII найдено</div></div>
+                <div class="dash-card"><div class="dash-num" style="color:${audit.total_leaks_detected>0?'#ef4444':'#69db7c'}">${audit.total_leaks_detected}</div><div class="dash-lbl">Утечек</div></div>
+                <div class="dash-card"><div class="dash-num">${audit.avg_latency_ms.toFixed(1)}</div><div class="dash-lbl">Latency мс</div></div>
+                <div class="dash-card"><div class="dash-num">${sessions.length}</div><div class="dash-lbl">Сессий</div></div>
+                <div class="dash-card"><div class="dash-num">${audit.total_errors}</div><div class="dash-lbl">Ошибок</div></div>`;
+            document.getElementById('dashInfo').textContent = JSON.stringify({audit, sessions}, null, 2);
+        } catch(e) {
+            document.getElementById('dashInfo').textContent = 'Ошибка: ' + e.message;
+        }
+    }
+</script>
+</body>
+</html>
