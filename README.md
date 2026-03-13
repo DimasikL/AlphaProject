@@ -249,11 +249,6 @@ USE_MOCK_LLM=true                 # true — без реального LLM
 
 # Детекция
 USE_NER=true                      # Natasha NER для ФИО/адресов
-
-# Безопасность
-SCAN_LLM_OUTPUT=true              # Сканировать ответы на утечки
-AUDIT_ENABLED=true                # Аудит-логирование
-SESSION_TTL=3600                  # TTL сессий (секунды)
 ```
 
 ---
